@@ -1,0 +1,54 @@
+{
+  "skill_name": "axi4-lite-compliance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "bvalid-before-w-handshake",
+      "prompt": "Check this AXI4-Lite slave for protocol compliance. I'm worried about the write FSM:\n\nmodule csr_slave (\n  input             ACLK,\n  input             ARESETn,\n  input             AWVALID,\n  output reg        AWREADY,\n  input  [11:0]     AWADDR,\n  input  [2:0]      AWPROT,\n  input             WVALID,\n  output reg        WREADY,\n  input  [31:0]     WDATA,\n  input  [3:0]      WSTRB,\n  output reg        BVALID,\n  input             BREADY,\n  output reg [1:0]  BRESP\n);\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      AWREADY <= 0; WREADY <= 0; BVALID <= 0; BRESP <= 2'b00;\n    end else begin\n      if (AWVALID & ~AWREADY) AWREADY <= 1;\n      if (WVALID  & ~WREADY ) WREADY  <= 1;\n      if (AWVALID & AWREADY) begin\n        BVALID <= 1;\n        BRESP  <= 2'b00;\n      end\n      if (BVALID & BREADY) BVALID <= 0;\n    end\n  end\nendmodule",
+      "expected_output": "Should flag CRITICAL O1 — BVALID asserted on AW handshake alone, ignoring W. Should provide corrected code with aw_done/w_done tracking. Should NOT flag the absent AR/R channels as violations (read channel is just not implemented).",
+      "assertions": [
+        {"type": "contains", "value": "CRITICAL", "description": "Must flag CRITICAL"},
+        {"type": "contains", "value": "O1", "description": "Must reference O1 ordering rule"},
+        {"type": "contains_any", "values": ["w_done", "W handshake", "WVALID & WREADY"], "description": "Fix must mention waiting for W handshake"},
+        {"type": "contains", "value": "FAIL", "description": "Overall: FAIL"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "exokay-response-illegal",
+      "prompt": "Is this AXI4-Lite read response compliant?\n\nmodule ro_slave (\n  input             ACLK, ARESETn,\n  input             ARVALID, RREADY,\n  output reg        ARREADY, RVALID,\n  input  [11:0]     ARADDR,\n  input  [2:0]      ARPROT,\n  output reg [31:0] RDATA,\n  output reg [1:0]  RRESP\n);\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      ARREADY <= 0; RVALID <= 0; RRESP <= 2'b00;\n    end else begin\n      if (ARVALID & ~ARREADY) ARREADY <= 1;\n      if (ARVALID & ARREADY) begin\n        RVALID <= 1;\n        RDATA  <= 32'hDEADBEEF;\n        RRESP  <= 2'b01;  // exclusive ok\n        ARREADY <= 0;\n      end\n      if (RVALID & RREADY) RVALID <= 0;\n    end\n  end\nendmodule",
+      "expected_output": "Must flag CRITICAL P1 — RRESP=2'b01 (EXOKAY) is illegal in AXI4-Lite (exclusive access not supported). Should recommend using OKAY (2'b00) or SLVERR (2'b10).",
+      "assertions": [
+        {"type": "contains", "value": "CRITICAL", "description": "Must flag CRITICAL"},
+        {"type": "contains", "value": "P1", "description": "Must reference P1 response code rule"},
+        {"type": "contains", "value": "EXOKAY", "description": "Must name EXOKAY"},
+        {"type": "contains_any", "values": ["OKAY", "2'b00"], "description": "Must suggest OKAY"},
+        {"type": "contains", "value": "FAIL", "description": "Overall: FAIL"}
+      ]
+    },
+    {
+      "id": 3,
+      "name": "full-axi-signals-mislabeled-as-lite",
+      "prompt": "I built this as an AXI4-Lite slave. Does it pass?\n\nmodule maybe_lite_slave (\n  input             ACLK, ARESETn,\n  // Write address\n  input             AWVALID,\n  output            AWREADY,\n  input  [31:0]     AWADDR,\n  input  [2:0]      AWPROT,\n  input  [7:0]      AWLEN,\n  input  [2:0]      AWSIZE,\n  input  [1:0]      AWBURST,\n  input  [3:0]      AWID,\n  // Write data\n  input             WVALID,\n  output            WREADY,\n  input  [63:0]     WDATA,\n  input  [7:0]      WSTRB,\n  input             WLAST,\n  // ...rest omitted\n);\nendmodule",
+      "expected_output": "Must flag CRITICAL X1 — burst signals (AWLEN, AWSIZE, AWBURST, AWID, WLAST) are present, which means this is Full AXI4, NOT AXI4-Lite. Should advise the user that AXI4-Lite cannot have these signals. Note: 64-bit DATA is legal for Lite, so don't flag that.",
+      "assertions": [
+        {"type": "contains", "value": "X1", "description": "Must reference X1 non-Lite rule"},
+        {"type": "contains_any", "values": ["AWLEN", "AWBURST", "burst"], "description": "Must name the offending signals"},
+        {"type": "contains", "value": "Full AXI", "description": "Must clarify this is Full AXI, not Lite"},
+        {"type": "not_contains", "value": "DATA width", "description": "Must NOT flag 64-bit data — Lite allows 32 or 64"}
+      ]
+    },
+    {
+      "id": 4,
+      "name": "compliant-minimal-slave",
+      "prompt": "Please review this write-only AXI4-Lite slave:\n\nmodule wo_csr_slave (\n  input             ACLK,\n  input             ARESETn,\n  input             AWVALID,\n  output reg        AWREADY,\n  input  [11:0]     AWADDR,\n  input  [2:0]      AWPROT,\n  input             WVALID,\n  output reg        WREADY,\n  input  [31:0]     WDATA,\n  input  [3:0]      WSTRB,\n  output reg        BVALID,\n  input             BREADY,\n  output reg [1:0]  BRESP\n);\n  reg aw_done, w_done;\n  reg [11:0] addr_capt;\n  reg [31:0] data_capt;\n  reg [3:0]  strb_capt;\n\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      AWREADY <= 0; WREADY <= 0; BVALID <= 0; BRESP <= 2'b00;\n      aw_done <= 0; w_done <= 0;\n    end else begin\n      if (AWVALID & ~AWREADY & ~aw_done) AWREADY <= 1;\n      if (AWVALID & AWREADY) begin\n        AWREADY   <= 0;\n        aw_done   <= 1;\n        addr_capt <= AWADDR;\n      end\n      if (WVALID & ~WREADY & ~w_done) WREADY <= 1;\n      if (WVALID & WREADY) begin\n        WREADY    <= 0;\n        w_done    <= 1;\n        data_capt <= WDATA;\n        strb_capt <= WSTRB;\n      end\n      if (aw_done & w_done & ~BVALID) begin\n        BVALID <= 1;\n        BRESP  <= 2'b00;\n      end else if (BVALID & BREADY) begin\n        BVALID  <= 0;\n        aw_done <= 0;\n        w_done  <= 0;\n      end\n    end\n  end\nendmodule",
+      "expected_output": "Should PASS or PASS WITH WARNINGS. The write FSM correctly waits for both AW and W. All VALIDs are reset. No EXOKAY. PROT and RESP widths correct. INFO: This is a write-only slave (no AR/R channel) — note that explicitly. Still provide SVA assertions.",
+      "assertions": [
+        {"type": "not_contains", "value": "❌ FAIL", "description": "Must not fail a compliant slave"},
+        {"type": "contains_any", "values": ["PASS", "✅"], "description": "Must indicate pass"},
+        {"type": "contains_any", "values": ["write-only", "no AR", "no read"], "description": "Must note the absent read channel"},
+        {"type": "contains", "value": "assert property", "description": "Must still suggest SVA"}
+      ]
+    }
+  ]
+}

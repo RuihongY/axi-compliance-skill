@@ -1,112 +1,92 @@
-# AXI4-Stream Compliance Checker — Claude Skill
+# AXI Compliance Skills for Claude
 
-A Claude skill that reviews Verilog / SystemVerilog RTL against the ARM AXI4-Stream
-specification (IHI0051B) and produces a structured compliance report.
+A collection of Claude skills that review Verilog / SystemVerilog RTL against
+the ARM AMBA AXI family of specifications and produce structured compliance
+reports.
 
 ---
 
-## What it does
+## Skills in this repo
 
-Paste or upload your AXI4-Stream RTL and get:
+| Skill | Spec | Description |
+|-------|------|-------------|
+| [`axi4-stream-compliance`](./axi4-stream-compliance/) | IHI0051 | AXI4-Stream protocol checker (TVALID/TREADY/TDATA/TLAST/TKEEP/TSTRB) |
+| [`axi4-lite-compliance`](./axi4-lite-compliance/) | IHI0022 | AXI4-Lite protocol checker (5 channels: AW/W/B/AR/R) |
 
-- 🔴 **CRITICAL** — Direct spec violations that cause data loss or functional failure
-- 🟡 **WARNING** — Non-recommended patterns that risk interoperability issues
+Each skill produces:
+
+- 🔴 **CRITICAL** — Direct spec violations causing data loss or functional failure
+- 🟡 **WARNING** — Non-recommended patterns risking interoperability issues
 - 🔵 **INFO** — Observations and best-practice suggestions
 - ✅ **Corrected code snippets** for every CRITICAL finding
 - 📋 **SVA assertion templates** ready to drop into your testbench
 
 ---
 
-## Coverage — 25 rules across 8 categories
+## Coverage summary
 
-| Category | Rules | Examples |
-|----------|-------|---------|
-| **H** Handshake | 4 | TVALID stickiness; Master must not gate TVALID on TREADY |
-| **R** Reset | 4 | TVALID=0 after reset; ARESETn polarity; consistent reset style |
-| **S** Signal Stability | 2 | All payload signals stable while TVALID=1 & TREADY=0 |
-| **W** Signal Widths | 6 | TDATA must be multiple of 8; TKEEP = TDATA/8; TID ≤ 8-bit |
-| **K** TKEEP / TSTRB | 4 | No null bytes mid-packet; TSTRB must be subset of TKEEP |
-| **L** TLAST / Framing | 4 | TID/TDEST must not change mid-packet; TLAST not tied LOW |
-| **C** Combinatorial | 2 | TVALID must not combinatorially depend on TREADY |
-| **X** Optional Signals | 3 | Missing TKEEP on wide bus; TUSER width alignment |
+### `axi4-stream-compliance` — 25 rules across 8 categories
+Handshake, Reset, Signal Stability, Widths, TKEEP/TSTRB, TLAST framing,
+Combinatorial dependency, Optional signals.
+
+### `axi4-lite-compliance` — 30+ rules across 8 categories
+Per-channel handshake (×5), Reset, Per-channel stability, Widths,
+Address alignment, Response codes (incl. EXOKAY illegal in Lite),
+Inter-channel ordering & deadlock avoidance, Non-Lite signal detection.
 
 ---
+
+## How to install a skill
+
+1. Download the `.skill` file you want:
+   - [`axi4-stream-compliance.skill`](./axi4-stream-compliance.skill)
+   - [`axi4-lite-compliance.skill`](./axi4-lite-compliance.skill)
+2. In Claude, open **Settings → Skills → Install from file**.
+3. Drag in the `.skill` file.
 
 ## How to use
 
-### Install the skill
-
-Download [`axi4-stream-compliance.skill`](./axi4-stream-compliance.skill) and
-install it in Claude (Settings → Skills → Install from file).
-
-### Trigger it
-
-Just paste your RTL and ask:
+Paste your RTL into a conversation and ask Claude to check it:
 
 ```
-Check this AXI4-Stream master for protocol compliance:
+Check this AXI4-Lite slave for protocol compliance:
 
-module axis_master (
-  input  wire        ACLK, ARESETn,
-  output reg         TVALID,
-  input  wire        TREADY,
-  output reg  [31:0] TDATA,
-  output reg         TLAST
-);
-...
+module my_csr_slave (
+  input             ACLK, ARESETn,
+  input             AWVALID,
+  output reg        AWREADY,
+  ...
 ```
 
-Claude will detect AXI4-Stream signals automatically and run the full compliance check.
+Claude will automatically detect the relevant AXI signals and trigger the
+appropriate skill — no need to name it.
 
 ---
 
-## File structure
+## Per-skill file structure
+
+Each skill follows the same layout:
 
 ```
-axi4-stream-compliance/
-├── SKILL.md                        # Skill entry point & workflow
+<skill-name>/
+├── SKILL.md                        # Entry point: when to trigger, workflow
 ├── scripts/
-│   └── extract_signals.py          # Extracts signal widths from RTL files
+│   └── extract_signals.py          # Auto-extract signal widths from RTL files
 ├── references/
-│   ├── protocol-rules.md           # Full rule catalogue with ARM spec references
-│   ├── common-violations.md        # 11 annotated anti-patterns with ❌/✅ code
-│   └── report-template.md          # Report format + SVA assertion templates
+│   ├── protocol-rules.md           # Full rule catalogue with ARM spec refs
+│   ├── common-violations.md        # Annotated anti-patterns (❌/✅ pairs)
+│   └── report-template.md          # Output format + SVA assertion library
 └── evals/
-    └── evals.json                  # 4 test cases (compliant + violating RTL)
-```
-
----
-
-## Example output
-
-```
-## AXI4-Stream Compliance Report
-
-### Interface Summary
-- Role: Master | Language: SystemVerilog
-- Signals: TVALID, TREADY, TDATA[31:0], TKEEP[3:0], TLAST
-- Reset: Async active-low (ARESETn)
-
-### Findings
-
-#### 🔴 CRITICAL — 1 issue
-
-[C-1] Rule H1 — TVALID Deasserted Without Handshake
-- Location: axis_master.sv, line 42 (SEND state)
-- What's wrong: TVALID is cleared unconditionally without checking TREADY.
-  The slave may miss the transfer entirely.
-- Fix: only clear TVALID when (TVALID & TREADY) is true.
-
-### Overall Assessment: ❌ FAIL
+    └── evals.json                  # Test cases (compliant + violating RTL)
 ```
 
 ---
 
 ## Roadmap
 
-- [ ] AXI4-Lite compliance checker
-- [ ] AXI4 Full (memory-mapped) compliance checker
-- [ ] Multi-file / top-level SoC review mode
+- [ ] AXI4 Full (memory-mapped, with bursts) compliance checker
+- [ ] CHI / ACE-Lite (cache coherent) compliance checker
+- [ ] AHB / AHB-Lite compliance checker
 
 ---
 
@@ -114,4 +94,4 @@ axi4-stream-compliance/
 
 MIT — use freely, contributions welcome.
 
-*Based on ARM AMBA AXI-Stream Protocol Specification IHI0051B.*
+*Based on ARM AMBA specifications IHI0051 (AXI-Stream) and IHI0022 (AXI / AXI-Lite).*
