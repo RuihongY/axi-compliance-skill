@@ -1,0 +1,112 @@
+{
+  "skill_name": "axi4-stream-compliance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "tvalid-dropped-without-handshake",
+      "prompt": "Please check this AXI4-Stream master for protocol compliance:\n\nmodule axis_master (\n  input  wire        ACLK,\n  input  wire        ARESETn,\n  output reg         TVALID,\n  input  wire        TREADY,\n  output reg  [31:0] TDATA,\n  output reg         TLAST\n);\n  reg send_en;\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      TDATA  <= 32'b0;\n      TLAST  <= 1'b0;\n      state  <= 2'd0;\n    end else begin\n      case (state)\n        2'd0: begin\n          if (send_en) begin\n            TVALID <= 1'b1;\n            TDATA  <= payload;\n            state  <= 2'd1;\n          end\n        end\n        2'd1: begin\n          TVALID <= 1'b0;  // immediately drop TVALID\n          state  <= 2'd0;\n        end\n      endcase\n    end\n  end\nendmodule",
+      "expected_output": "Report should flag CRITICAL H1 (TVALID dropped without handshake in state 2'd1) and CRITICAL R1 (TVALID not cleared in reset). Should provide corrected code for both. Should suggest SVA assertions.",
+      "assertions": [
+        {
+          "type": "contains",
+          "value": "CRITICAL",
+          "description": "Report must contain at least one CRITICAL finding"
+        },
+        {
+          "type": "contains",
+          "value": "H1",
+          "description": "Must identify the TVALID stickiness rule violation"
+        },
+        {
+          "type": "contains",
+          "value": "TREADY",
+          "description": "Fix must mention waiting for TREADY"
+        },
+        {
+          "type": "contains",
+          "value": "FAIL",
+          "description": "Overall assessment must be FAIL"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "tdata-width-not-byte-aligned",
+      "prompt": "Review this AXI4-Stream interface for spec compliance:\n\nmodule adc_axis_source #(\n  parameter DATA_W = 12\n) (\n  input  wire           ACLK,\n  input  wire           ARESETn,\n  output reg            TVALID,\n  input  wire           TREADY,\n  output reg [DATA_W-1:0] TDATA,\n  output reg [DATA_W/8-1:0] TKEEP,\n  output reg            TLAST\n);\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      TVALID <= 1'b0;\n      TDATA  <= '0;\n      TKEEP  <= '0;\n      TLAST  <= 1'b0;\n    end else if (adc_valid && !TVALID) begin\n      TVALID <= 1'b1;\n      TDATA  <= adc_data;\n      TKEEP  <= '1;\n      TLAST  <= 1'b1;\n    end else if (TVALID && TREADY) begin\n      TVALID <= 1'b0;\n    end\n  end\nendmodule",
+      "expected_output": "Report should flag CRITICAL W1 (TDATA=12 bits, not a multiple of 8) and CRITICAL W2 (TKEEP=12/8=1 bit, wrong sizing). Should recommend padding TDATA to 16 bits. Reset and handshake behavior is compliant — should NOT be flagged.",
+      "assertions": [
+        {
+          "type": "contains",
+          "value": "W1",
+          "description": "Must identify TDATA width non-compliance"
+        },
+        {
+          "type": "contains",
+          "value": "16",
+          "description": "Fix must recommend 16-bit TDATA"
+        },
+        {
+          "type": "not_contains",
+          "value": "R1",
+          "description": "Must NOT flag reset — TVALID is correctly cleared in reset"
+        },
+        {
+          "type": "not_contains",
+          "value": "H1",
+          "description": "Must NOT flag handshake — TVALID handling is correct"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "tvalid-gated-by-tready-combinatorial-loop",
+      "prompt": "Does this AXI4-Stream master have any protocol issues?\n\nmodule axis_sender (\n  input  wire        ACLK,\n  input  wire        ARESETn,\n  output wire        TVALID,\n  input  wire        TREADY,\n  output reg  [63:0] TDATA,\n  output reg  [ 7:0] TKEEP,\n  output reg         TLAST\n);\n  reg data_ready;\n  // Combinatorial TVALID\n  assign TVALID = data_ready & TREADY;\n\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      TDATA      <= '0;\n      TKEEP      <= '0;\n      TLAST      <= 1'b0;\n      data_ready <= 1'b0;\n    end else begin\n      if (fifo_valid) begin\n        TDATA      <= fifo_data;\n        TKEEP      <= 8'hFF;\n        TLAST      <= fifo_last;\n        data_ready <= 1'b1;\n      end else if (TVALID & TREADY) begin\n        data_ready <= 1'b0;\n      end\n    end\n  end\nendmodule",
+      "expected_output": "Report must flag CRITICAL C1/H2 — TVALID is combinatorially derived from TREADY (assign TVALID = data_ready & TREADY). This creates a potential combinatorial loop and violates H2. TDATA/TKEEP payload stability is at risk too since TDATA is updated from FIFO without checking stall. Should explain the combinatorial loop risk clearly.",
+      "assertions": [
+        {
+          "type": "contains",
+          "value": "CRITICAL",
+          "description": "Must be flagged as CRITICAL"
+        },
+        {
+          "type": "contains_any",
+          "values": ["C1", "H2", "combinatorial"],
+          "description": "Must identify the combinatorial dependency issue"
+        },
+        {
+          "type": "contains",
+          "value": "loop",
+          "description": "Must explain the combinatorial loop risk"
+        },
+        {
+          "type": "contains",
+          "value": "FAIL",
+          "description": "Overall assessment must be FAIL"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "fully-compliant-master",
+      "prompt": "Can you check this AXI4-Stream master implementation?\n\nmodule axis_master_good (\n  input  wire        ACLK,\n  input  wire        ARESETn,\n  output reg         TVALID,\n  input  wire        TREADY,\n  output reg  [31:0] TDATA,\n  output reg  [ 3:0] TKEEP,\n  output reg         TLAST\n);\n  typedef enum logic [1:0] { IDLE, LOAD, SEND } state_t;\n  state_t state;\n\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      TVALID <= 1'b0;\n      TDATA  <= 32'b0;\n      TKEEP  <= 4'b0;\n      TLAST  <= 1'b0;\n      state  <= IDLE;\n    end else begin\n      case (state)\n        IDLE: begin\n          if (src_valid) begin\n            TDATA  <= src_data;\n            TKEEP  <= src_keep;\n            TLAST  <= src_last;\n            TVALID <= 1'b1;\n            state  <= SEND;\n          end\n        end\n        SEND: begin\n          if (TVALID & TREADY) begin\n            if (src_valid) begin\n              TDATA <= src_data;\n              TKEEP <= src_keep;\n              TLAST <= src_last;\n            end else begin\n              TVALID <= 1'b0;\n              state  <= IDLE;\n            end\n          end\n        end\n      endcase\n    end\n  end\nendmodule",
+      "expected_output": "This RTL is compliant. Report should give PASS or PASS WITH WARNINGS. Must NOT flag spurious CRITICAL issues. May give INFO notes (e.g., TDATA updates on same cycle as TREADY — payload stability in zero-latency back-to-back transfers). Should still provide SVA assertions.",
+      "assertions": [
+        {
+          "type": "not_contains",
+          "value": "❌ FAIL",
+          "description": "Must not give a FAIL result for compliant code"
+        },
+        {
+          "type": "contains_any",
+          "values": ["PASS", "✅"],
+          "description": "Must give PASS or PASS WITH WARNINGS"
+        },
+        {
+          "type": "contains",
+          "value": "assert property",
+          "description": "Must still provide SVA assertions even for passing code"
+        }
+      ]
+    }
+  ]
+}
