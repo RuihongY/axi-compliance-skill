@@ -1,19 +1,19 @@
 # AXI4-Stream Compliance Checker — Claude Skill
 
-> 🔴 **Open-source alternative to $100K/year commercial EDA tools (JasperGold / SpyGlass)**  
-> A Claude skill that reviews Verilog / SystemVerilog RTL against the ARM AXI4-Stream specification (IHI0051).
+A Claude skill that reviews Verilog / SystemVerilog RTL against the ARM AXI4-Stream
+specification (IHI0051B) and produces a structured compliance report.
 
 ---
 
 ## What it does
 
-Paste or upload your AXI4-Stream RTL and get a structured compliance report:
+Paste or upload your AXI4-Stream RTL and get:
 
-- 🔴 **CRITICAL** — Direct spec violations causing data loss or functional failure  
-- 🟡 **WARNING** — Non-recommended patterns causing interoperability issues  
-- 🔵 **INFO** — Observations and best-practice suggestions  
-- ✅ **Corrected code snippets** for every CRITICAL finding  
-- 📋 **SVA assertion templates** you can drop into your testbench
+- 🔴 **CRITICAL** — Direct spec violations that cause data loss or functional failure
+- 🟡 **WARNING** — Non-recommended patterns that risk interoperability issues
+- 🔵 **INFO** — Observations and best-practice suggestions
+- ✅ **Corrected code snippets** for every CRITICAL finding
+- 📋 **SVA assertion templates** ready to drop into your testbench
 
 ---
 
@@ -36,7 +36,8 @@ Paste or upload your AXI4-Stream RTL and get a structured compliance report:
 
 ### Install the skill
 
-Download [`axi4-stream-compliance.skill`](./axi4-stream-compliance.skill) and install it in Claude (Settings → Skills → Install from file).
+Download [`axi4-stream-compliance.skill`](./axi4-stream-compliance.skill) and
+install it in Claude (Settings → Skills → Install from file).
 
 ### Trigger it
 
@@ -55,7 +56,7 @@ module axis_master (
 ...
 ```
 
-Claude will automatically detect AXI4-Stream signals and run the full compliance check.
+Claude will detect AXI4-Stream signals automatically and run the full compliance check.
 
 ---
 
@@ -63,11 +64,15 @@ Claude will automatically detect AXI4-Stream signals and run the full compliance
 
 ```
 axi4-stream-compliance/
-├── SKILL.md                          # Skill entry point & workflow
-└── references/
-    ├── protocol-rules.md             # Full rule catalogue (ARM spec references)
-    ├── common-violations.md          # 11 annotated anti-patterns with ❌/✅ code
-    └── report-template.md           # Report format + SVA assertion templates
+├── SKILL.md                        # Skill entry point & workflow
+├── scripts/
+│   └── extract_signals.py          # Extracts signal widths from RTL files
+├── references/
+│   ├── protocol-rules.md           # Full rule catalogue with ARM spec references
+│   ├── common-violations.md        # 11 annotated anti-patterns with ❌/✅ code
+│   └── report-template.md          # Report format + SVA assertion templates
+└── evals/
+    └── evals.json                  # 4 test cases (compliant + violating RTL)
 ```
 
 ---
@@ -78,25 +83,19 @@ axi4-stream-compliance/
 ## AXI4-Stream Compliance Report
 
 ### Interface Summary
-- Role: Master
-- Signals: TVALID, TREADY, TDATA[31:0], TLAST
+- Role: Master | Language: SystemVerilog
+- Signals: TVALID, TREADY, TDATA[31:0], TKEEP[3:0], TLAST
 - Reset: Async active-low (ARESETn)
 
 ### Findings
 
-#### 🔴 CRITICAL — 1 issue found
+#### 🔴 CRITICAL — 1 issue
 
-**[C-1] Rule H1 — TVALID Deasserted Without Handshake**
-- Location: axis_master.v, line 42
-- What's wrong: TVALID is cleared unconditionally in the SEND state,
-  regardless of whether TREADY was seen.
-- Risk: Data loss — slave may miss transfers.
-- Fix: See corrected code below.
-
-#### 🔵 INFO — 1 note
-
-**[I-1] Rule X2 — TKEEP absent on 32-bit bus**
-- Recommendation: Add output [3:0] TKEEP for partial last-beat support.
+[C-1] Rule H1 — TVALID Deasserted Without Handshake
+- Location: axis_master.sv, line 42 (SEND state)
+- What's wrong: TVALID is cleared unconditionally without checking TREADY.
+  The slave may miss the transfer entirely.
+- Fix: only clear TVALID when (TVALID & TREADY) is true.
 
 ### Overall Assessment: ❌ FAIL
 ```
@@ -105,16 +104,9 @@ axi4-stream-compliance/
 
 ## Roadmap
 
-- [ ] AXI4-Lite compliance checker  
-- [ ] AXI4 Full (memory-mapped) compliance checker  
-- [ ] Yosys integration for automated signal-width extraction  
-- [ ] Multi-file / full SoC review mode  
-
----
-
-## Background
-
-Commercial CDC/protocol checkers like Siemens Questa CDC, Cadence JasperGold, and Synopsys SpyGlass cost **$100,000+/year** and are inaccessible to most individual engineers, students, and small teams. This skill brings structured, spec-accurate AXI4-Stream checking to anyone with Claude.
+- [ ] AXI4-Lite compliance checker
+- [ ] AXI4 Full (memory-mapped) compliance checker
+- [ ] Multi-file / top-level SoC review mode
 
 ---
 
