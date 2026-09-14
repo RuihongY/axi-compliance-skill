@@ -1,0 +1,149 @@
+{
+  "skill_name": "ahb-compliance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "address-data-mixup",
+      "prompt": "Review Lite slave: if (HSEL && HREADY && HTRANS[1]) mem[HADDR] <= HWDATA; traffic can be back-to-back.",
+      "expected_output": "Flag T1/T3: current address and previous data are mixed. Capture address/control and perform side effect from data-phase state.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag T1/T3: current address and previous data are mixed. Capture address/control and perform side effect from data-phase state."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "local-ready-capture",
+      "prompt": "Slave B captures HADDR when HSEL_B && HREADYOUT_B && HTRANS[1]. Slave A owns current data phase and holds bus HREADY low.",
+      "expected_output": "Flag T1: B cannot accept on local ready while bus HREADY low. Use global HREADY.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag T1: B cannot accept on local ready while bus HREADY low. Use global HREADY."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "one-cycle-error",
+      "prompt": "AHB-Lite active read returns HRESP=1,HREADYOUT=1 immediately, without preceding HRESP=1,HREADYOUT=0.",
+      "expected_output": "Flag R2, show required first/final error pair.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag R2, show required first/final error pair."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "valid-two-cycle-error",
+      "prompt": "After two OKAY wait states a Lite slave emits (HRESP,HREADYOUT)=(1,0), then (1,1). Master changes next HTRANS to IDLE in final error cycle.",
+      "expected_output": "Legal response and recovery; do not flag unconditional stall stability or extra OKAY waits.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal response and recovery; do not flag unconditional stall stability or extra OKAY waits."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "idle-not-cancel",
+      "prompt": "Accepted write A is in a stalled data phase. Current address phase HTRANS is IDLE. Slave clears pending write on HTRANS==IDLE.",
+      "expected_output": "Flag T2/T3. Current IDLE does not cancel the earlier write.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag T2/T3. Current IDLE does not cancel the earlier write."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "busy-gap",
+      "prompt": "Lite INCR4 has accepted addresses 0, then BUSY cycles, then accepted SEQ addresses 4,8,12. BUSY cycles are not counted as data beats.",
+      "expected_output": "Legal burst gap. Do not count BUSY as one of four active transfers.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal burst gap. Do not count BUSY as one of four active transfers."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "halfword-unaligned",
+      "prompt": "AHB-Lite HTRANS=NONSEQ, HADDR=1, HSIZE=1, 32-bit bus. Is this like an AXI unaligned start?",
+      "expected_output": "Flag B1: AHB address must align to transfer size.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag B1: AHB address must align to transfer size."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "wrap-1kb",
+      "prompt": "AHB WRAP4 words start 0x3FC and visit 0x3FC,0x3F0,0x3F4,0x3F8.",
+      "expected_output": "Legal wrap sequence. Do not require wrap-base-aligned start or treat as linear INCR.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal wrap sequence. Do not require wrap-base-aligned start or treat as linear INCR."
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "name": "incr-1kb",
+      "prompt": "AHB INCR4 words start 0x3F8, then 0x3FC,0x400,0x404 with SEQ continuing.",
+      "expected_output": "Flag B3: incrementing burst crosses 1KB; start a new NONSEQ burst at boundary.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag B3: incrementing burst crosses 1KB; start a new NONSEQ burst at boundary."
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "lite-no-arbitration",
+      "prompt": "A single-master AHB-Lite slave has one-bit HRESP and no HBUSREQ, HGRANT, HSPLIT. Is it missing required signals?",
+      "expected_output": "Do not flag missing legacy arbitration. Lite permits only OKAY/ERROR; scope is slave interface.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Do not flag missing legacy arbitration. Lite permits only OKAY/ERROR; scope is slave interface."
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "name": "legacy-split",
+      "prompt": "Legacy AMBA2 AHB arbiter unmasks master 2 after HSPLIT[2], then grants according to configured priority when allowed. Is HSPLIT itself completion?",
+      "expected_output": "HSPLIT releases masking, not completion or immediate grant. Replayed transfer still needed; verify L4.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "HSPLIT releases masking, not completion or immediate grant. Replayed transfer still needed; verify L4."
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "name": "legacy-grant-during-wait",
+      "prompt": "Legacy arbiter changes HGRANT while HREADY=0; master immediately drives its address, replacing prior master address during active wait.",
+      "expected_output": "Flag L2: grant cannot cause premature accepted ownership switch; separate address and data-phase owners.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag L2: grant cannot cause premature accepted ownership switch; separate address and data-phase owners."
+        }
+      ]
+    }
+  ]
+}

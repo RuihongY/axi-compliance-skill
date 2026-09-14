@@ -1,5 +1,8 @@
 # AXI4-Lite Protocol Rules Reference
-*Based on ARM IHI0022 (AMBA AXI Protocol Specification, AXI4-Lite chapter B1)*
+*Baseline: Arm IHI0022H, sections A3 and B1.*
+
+[Arm specification](https://developer.arm.com/documentation/ihi0022/h)
+contains the source requirements; distinguish them from register-map policy.
 
 ---
 
@@ -30,7 +33,8 @@ Every channel has its own VALID/READY handshake — rules H, R, S below apply
 
 ---
 
-## H — Handshake Rules {#h-handshake}
+<a id="h-handshake"></a>
+## H — Handshake Rules
 
 ### H1 — VALID Stickiness (CRITICAL — applies to all 5 channels)
 **Rule**: Once a source asserts VALID on any channel, it MUST NOT deassert
@@ -65,7 +69,7 @@ its own VALID. VALID is driven by the source's own readiness only.
 
 ```verilog
 // VIOLATION
-assign AWREADY = aw_room & AWVALID;  // OK (slave can do this for AW)
+assign AWREADY = aw_room & AWVALID;  // violates H5: combinatorial input/output path
 assign BVALID  = rsp_ready & BREADY; // ← VIOLATION — BVALID gated on BREADY
 ```
 
@@ -83,38 +87,31 @@ when both VALID=1 AND READY=1.
 
 ---
 
-## R — Reset Rules {#r-reset}
+### H5 — No Combinatorial Input-to-Output Paths (CRITICAL)
+A3.1.1/A3.2 prohibit combinatorial paths between interface inputs and
+outputs, including VALID-to-READY. Waiting for VALID is allowed through
+registered logic. This timing rule is separate from H2's logical dependency.
 
-### R1 — All VALID Outputs LOW After Reset (CRITICAL — per channel)
-**Rule**: After ARESETn is deasserted (or after synchronous reset),
-the source on each channel must drive VALID LOW for at least the
-first clock edge. The destination must drive READY LOW or be in a known state.
+<a id="r-reset"></a>
+## R — Reset Rules
 
-**ARM Spec**: A3.1.2 — "The earliest point after reset that a master is
-permitted to begin driving ARVALID, AWVALID, or WVALID HIGH is at a
-rising ACLK edge after ARESETn is HIGH."
+### R1 — VALID Reset Behavior (CRITICAL — per driven channel)
+During reset, master AWVALID/WVALID/ARVALID and slave BVALID/RVALID must be
+LOW. They may assert after a rising ACLK edge with reset inactive (A3.1.2).
+READY has no mandatory LOW reset value. Check driven outputs and state
+feeding them; an input VALID belongs to the opposite endpoint.
 
-**RTL check**: Reset branch of every register driving AWVALID, WVALID,
-BVALID, ARVALID, RVALID must set it to 0. Missing reset on any of these is
-a CRITICAL bug.
+### R2 — Reset Polarity and Mapping
+The interface reset is active-low. Custom RTL names and an internal inverted
+reset are legal; trace the actual mapping before reporting a polarity bug.
 
----
+### R3 — Reset Implementation Review (INFO)
+Mixed synchronous/asynchronous register resets are not themselves an AXI
+violation. Check externally visible VALID reset behavior and synchronous
+reset release; do not require payload registers to share a reset style.
 
-### R2 — ARESETn Active-Low Required (WARNING)
-**Rule**: Global reset is named ARESETn and is active-LOW. Active-high
-or other names (`rst`, `resetb`, `reset_n`) are non-standard and risk
-integration errors.
-
----
-
-### R3 — Reset Style Consistency (WARNING)
-**Rule**: All flip-flops in the same clock domain should use the same
-reset style (all sync or all async). Mixing within a module is a common
-synthesis hazard.
-
----
-
-## S — Signal Stability Rules {#s-signal-stability}
+<a id="s-signal-stability"></a>
+## S — Signal Stability Rules
 
 ### S1 — Payload Stable During Stall (CRITICAL — per channel)
 **Rule**: While VALID=1 and READY=0 on any channel, every payload signal
@@ -144,7 +141,8 @@ always @(posedge ACLK)
 
 ---
 
-## W — Signal Width Rules {#w-signal-widths}
+<a id="w-signal-widths"></a>
+## W — Signal Width Rules
 
 ### W1 — Data Width Must Be 32 or 64 (CRITICAL)
 **Rule**: AXI4-Lite supports only `DATA_WIDTH = 32` or `DATA_WIDTH = 64`.
@@ -188,21 +186,13 @@ review.
 
 ---
 
-## A — Address Rules {#a-address}
+<a id="a-address"></a>
+## A — Address Rules
 
-### A1 — Address Must Be Aligned to Data Bus Width (CRITICAL)
-**Rule**: AWADDR and ARADDR must be aligned to the data bus width.
-- For 32-bit data: AWADDR[1:0] == 2'b00 (4-byte aligned)
-- For 64-bit data: AWADDR[2:0] == 3'b000 (8-byte aligned)
-
-**ARM Spec**: A3.3.1 — "AXI4-Lite supports aligned transfers only."
-
-**RTL check**: If the slave does not ignore or check the low address bits,
-unaligned masters will silently corrupt data. The slave SHOULD either:
-- Tie off the low bits in the decoder (e.g., `reg_idx = AWADDR[11:2]`), AND
-- Return SLVERR for unaligned writes (defensive).
-
----
+### A1 — Address and Byte-Lane Handling
+Do not impose a blanket aligned-address-only rule or mandatory SLVERR on
+nonzero low address bits. Check address/WSTRB consistency and the documented
+register-map policy (A3.4 and B1.1). A word-index decoder alone is not a bug.
 
 ### A2 — AWADDR Width Should Equal ARADDR Width (INFO)
 **Rule**: A slave generally has identical AWADDR and ARADDR widths.
@@ -210,7 +200,8 @@ Different widths are unusual — flag for review.
 
 ---
 
-## P — Protection & Response Rules {#p-response}
+<a id="p-response"></a>
+## P — Protection & Response Rules
 
 ### P1 — BRESP / RRESP Encoding (CRITICAL)
 **Rule**: The 2-bit response codes have these legal encodings in AXI4-Lite:
@@ -231,13 +222,9 @@ assign BRESP = 2'b01;  // ← Illegal in AXI4-Lite, will confuse masters
 
 ---
 
-### P2 — Slave Should Detect Decode Errors (INFO)
-**Rule**: A well-behaved slave returns DECERR for accesses to unmapped
-addresses within its region, and SLVERR for known-bad accesses (write to
-read-only register, unaligned access, etc.). Pure OKAY-only slaves miss
-useful diagnostics.
-
----
+### P2 — Error Response Policy (INFO)
+Check the documented register-map policy. Do not require every slave to
+produce DECERR for internal holes or reject all unaligned addresses.
 
 ### P3 — AWPROT / ARPROT Default Handling (INFO)
 **Rule**: Many simple slaves ignore AWPROT/ARPROT entirely (treating all
@@ -246,7 +233,8 @@ be documented.
 
 ---
 
-## O — Ordering & Deadlock Rules {#o-ordering}
+<a id="o-ordering"></a>
+## O — Ordering & Deadlock Rules
 
 ### O1 — B Response After AW AND W Handshakes (CRITICAL)
 **Rule**: The slave MUST NOT assert BVALID until BOTH the AW handshake
@@ -262,7 +250,8 @@ always @(posedge ACLK)
   if (AWVALID & AWREADY)
     BVALID <= 1'b1;   // ← wrong — must wait for W handshake too
 
-// FIX
+// Illustrative bookkeeping only: reset flags/VALID, gate AWREADY/WREADY
+// by storage capacity, and do not accept a new pair while B is stalled.
 reg aw_done, w_done;
 always @(posedge ACLK) begin
   if (AWVALID & AWREADY) aw_done <= 1;
@@ -285,9 +274,10 @@ end
 
 ```verilog
 // VIOLATION
-assign RVALID = read_pending;  // asserted before AR handshake captured
+assign RVALID = ARVALID;  // can assert before any AR handshake
 
-// FIX — track that AR was accepted
+// FIX — track that AR was accepted; ARREADY must prevent overwriting
+// a stalled response, and RDATA/RRESP must be held with RVALID.
 always @(posedge ACLK)
   if (!ARESETn)               RVALID <= 0;
   else if (ARVALID & ARREADY) RVALID <= 1;
@@ -296,47 +286,25 @@ always @(posedge ACLK)
 
 ---
 
-### O3 — Inter-Channel Deadlock Avoidance (CRITICAL)
-**Rule**: VALID on one channel must not combinatorially depend on READY of
-another channel. Doing so creates a deadlock when the destination of the
-other channel is waiting on the first.
+### O3 — Inter-Channel Deadlock Avoidance (CRITICAL when demonstrated)
+Check legal AW-before-W, W-before-AW, simultaneous requests, and stalled
+responses. A slave may wait for both AWVALID and WVALID before accepting a
+write; the master must offer WVALID without waiting for AWREADY (A3.3).
+A slave cannot require BREADY before producing BVALID. Buffer-capacity
+backpressure is legal: refusing new requests while a response is pending
+is not inherently deadlock. Show a feasible circular wait, not just a
+cross-channel dependency. Apply H5 separately to combinatorial paths.
 
-**Common deadlock examples**:
+<a id="x-non-lite"></a>
+## X — Non-Lite Signal Rules
 
-```verilog
-// VIOLATION — AWREADY gated on BREADY
-assign AWREADY = aw_capacity & BREADY;
-// Deadlock if master sets BREADY low until it sees BVALID — slave never
-// accepts AW, never produces B, never sets BVALID.
-
-// VIOLATION — BVALID waiting for AW to be ready (cyclic)
-assign BVALID = aw_done & ~AWVALID;
-```
-
-**Rule of thumb**: Each channel's VALID/READY logic should depend on
-internal state and that channel's own counterpart signal — not on other
-channels' handshake signals.
-
----
-
-## X — Non-Lite Signal Rules {#x-non-lite}
-
-### X1 — Burst Signals Must NOT Be Present (CRITICAL if found)
-**Rule**: AXI4-Lite supports only single-beat transactions. The following
-**Full AXI4** signals must NOT appear on an AXI4-Lite interface:
-
-- AWLEN, AWSIZE, AWBURST, AWLOCK, AWCACHE, AWQOS, AWREGION, AWID
-- ARLEN, ARSIZE, ARBURST, ARLOCK, ARCACHE, ARQOS, ARREGION, ARID
-- WLAST, WID
-- BID
-- RLAST, RID
-
-If any of these are present, the interface is **Full AXI4, not AXI4-Lite**.
-
-**RTL check**: Search the port list. Their presence alone disqualifies
-the module as AXI4-Lite.
-
----
+### X1 — Classify Each Interface Before Reporting
+AXI4-Lite transfers are single-beat. Burst-control ports require checking
+whether the boundary is Full AXI, a constrained compatibility wrapper, or
+one side of a bridge. Port names alone do not prove illegal behavior.
+Optional ID reflection is explicitly supported (B1.1.4, B1.2): AWID/ARID
+and BID/RID alone do not disqualify a Lite slave. Check response-ID pairing.
+Report a violation when behavior exceeds the claimed Lite contract.
 
 ### X2 — Optional Sideband Signals (INFO)
 Some vendor-specific AXI4-Lite implementations add optional signals

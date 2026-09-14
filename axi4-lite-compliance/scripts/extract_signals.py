@@ -8,6 +8,8 @@ reports signal widths, flags non-Lite (Full AXI) signals, and runs quick
 compliance checks (data width, PROT/RESP widths, WSTRB sizing).
 """
 
+from __future__ import annotations
+
 import re
 import sys
 import json
@@ -39,29 +41,41 @@ PORT_RE = re.compile(
     re.IGNORECASE
 )
 PARAM_RE = re.compile(
-    r'\bparameter\b\s+(?:integer\s+)?(\w+)\s*=\s*(\d+)',
+    r'\bparameter\b\s+(?:integer\s+)?(\w+)\s*=\s*([0-9]+)\s*(?=[,;)])',
     re.IGNORECASE
 )
-RESET_ASYNC_RE = re.compile(r'always\s*@\s*\([^)]*negedge\s+\w*reset\w*', re.IGNORECASE)
-RESET_SYNC_RE  = re.compile(r'always\s*@\s*\(\s*posedge\s+\w*clk\w*\s*\)', re.IGNORECASE)
+RESET_ASYNC_RE = re.compile(r'always(?:_ff)?\s*@\s*\([^)]*negedge\s+\w*reset\w*', re.IGNORECASE)
+RESET_SYNC_RE  = re.compile(r'always(?:_ff)?\s*@\s*\(\s*posedge\s+\w*clk\w*\s*\)', re.IGNORECASE)
 RESET_LOW_RE   = re.compile(r'if\s*\(\s*!\s*(?:ARESETN|ARESETn|resetn|rst_n|rstn)\s*\)', re.IGNORECASE)
-RESET_HIGH_RE  = re.compile(r'if\s*\(\s*(?:ARESETN|ARESETn|resetn|rst_n|rstn)\s*\)', re.IGNORECASE)
 
 
 def resolve_width(expr, params):
-    """Try to evaluate a width expression like 'DATA_WIDTH-1:0' → width."""
+    """Resolve simple packed ranges conservatively; unsupported bounds stay unknown."""
     if expr is None:
         return 1
-    m = re.match(r'(\d+)\s*:\s*0', expr.strip())
-    if m:
-        return int(m.group(1)) + 1
-    m = re.match(r'(\w+)\s*-\s*1\s*:\s*0', expr.strip())
-    if m and m.group(1) in params:
-        return params[m.group(1)]
-    m = re.match(r'(\w+)\s*/\s*8\s*-\s*1\s*:\s*0', expr.strip())
-    if m and m.group(1) in params:
-        return params[m.group(1)] // 8
-    return None
+
+    def bound(value):
+        value = value.strip()
+        if re.fullmatch(r"[0-9]+", value):
+            return int(value)
+        if value in params:
+            return params[value]
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)(?:\s*/\s*([1-9][0-9]*))?\s*-\s*1", value)
+        if match and match[1] in params:
+            return params[match[1]] // int(match[2] or 1) - 1
+        return None
+
+    parts = expr.split(":")
+    if len(parts) != 2:
+        return None
+    msb, lsb = map(bound, parts)
+    return abs(msb - lsb) + 1 if msb is not None and lsb is not None else None
+
+
+def strip_comments(src):
+    """Hide comments and strings without changing line offsets."""
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"',
+                  lambda m: re.sub(r"[^\n]", " ", m[0]), src, flags=re.S)
 
 
 def canonical_name(name):
@@ -84,7 +98,10 @@ def analyze(filepath):
     path = Path(filepath)
     if not path.exists():
         return {"error": f"File not found: {filepath}"}
-    src = path.read_text(errors="replace")
+    try:
+        src = strip_comments(path.read_text(errors="replace"))
+    except OSError as exc:
+        return {"error": f"Cannot read {filepath}: {exc}"}
 
     # Parameters
     params = {}
@@ -119,7 +136,6 @@ def analyze(filepath):
     has_async = bool(RESET_ASYNC_RE.search(src))
     has_sync  = bool(RESET_SYNC_RE.search(src))
     active_low  = bool(RESET_LOW_RE.search(src))
-    active_high = bool(RESET_HIGH_RE.search(src)) and not active_low
 
     # Determine implemented channels (need at least VALID + READY for the channel)
     implemented = []
@@ -145,7 +161,7 @@ def analyze(filepath):
         data_w = channels["R"]["RDATA"]["width"]
 
     # Quick checks
-    notes = []
+    notes = ["Heuristic inventory only: confirm grouped declarations, module/interface boundaries, parameters, and reset behavior manually."]
     if data_w is not None and data_w not in (32, 64):
         notes.append(f"CRITICAL W1: DATA width={data_w}, must be 32 or 64 for AXI4-Lite")
 
@@ -168,10 +184,8 @@ def analyze(filepath):
 
     if full_axi_intrusions:
         sigs = ", ".join(full_axi_intrusions.keys())
-        notes.append(f"CRITICAL X1: Full AXI4 signals present ({sigs}) — this is NOT AXI4-Lite")
+        notes.append(f"INFO X1: Extended AXI signals present ({sigs}); classify the interface and check ID reflection/bridge constraints manually")
 
-    if active_high:
-        notes.append("WARNING R2: Reset appears active-HIGH — spec requires active-low ARESETn")
 
     return {
         "file": str(path),
@@ -183,7 +197,7 @@ def analyze(filepath):
         "full_axi_intrusions": full_axi_intrusions,
         "reset": {
             "style": "async" if has_async else ("sync" if has_sync else "unknown"),
-            "polarity": "active_low" if active_low else ("active_high" if active_high else "unknown"),
+            "polarity": "active_low" if active_low else "unknown",
         },
         "quick_checks": {
             "data_width": data_w,
@@ -197,4 +211,6 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python3 extract_signals.py <file.v|file.sv>")
         sys.exit(1)
-    print(json.dumps(analyze(sys.argv[1]), indent=2))
+    result = analyze(sys.argv[1])
+    print(json.dumps(result, indent=2))
+    sys.exit(1 if "error" in result else 0)

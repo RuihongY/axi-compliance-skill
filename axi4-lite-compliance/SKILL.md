@@ -1,18 +1,7 @@
 ---
 name: axi4-lite-compliance
 description: >
-  AXI4-Lite protocol compliance checker for RTL (Verilog / SystemVerilog).
-  Use this skill whenever the user shares RTL code that contains AXI4-Lite
-  signals — including AWVALID, AWREADY, AWADDR, AWPROT, WVALID, WREADY,
-  WDATA, WSTRB, BVALID, BREADY, BRESP, ARVALID, ARREADY, ARADDR, ARPROT,
-  RVALID, RREADY, RDATA, RRESP, ACLK, or ARESETn. Trigger on phrases like
-  "check my AXI-Lite", "register bank", "MMIO interface", "control/status
-  register", "CSR slave", "configuration register interface", "BRESP /
-  RRESP", "BVALID ordering", or any time the user asks if their AXI-Lite
-  RTL is spec compliant — even for partial snippets. Always use this skill
-  rather than answering from memory alone; the references contain the full
-  ARM spec rule catalogue, channel ordering constraints, and deadlock
-  patterns essential for accurate review.
+  Review AXI4-Lite Verilog/SystemVerilog RTL for channel handshakes, reset, payload stability, response ordering, and deadlock. Use for AXI-Lite or AXI-based CSR/MMIO reviews, including partial snippets; confirm the protocol when Full AXI signals are present.
 ---
 
 # AXI4-Lite Compliance Checker
@@ -64,8 +53,8 @@ Identify:
 - **Data width**: must be 32 or 64 — anything else is non-compliant.
 - **Reset style**: async (`negedge ARESETn`) or sync (`if (!ARESETn)`)
 - **Language**: Verilog-2001 / SystemVerilog / mixed
-- **Burst-signal contamination**: Are there AWLEN, AWSIZE, AWBURST, AWID,
-  ARLEN, etc? Those are Full AXI4, NOT Lite — flag and confirm.
+- **Interface classification**: Inspect burst signals and ID reflection per interface.
+  A Full-to-Lite bridge can contain both protocols; IDs alone do not disqualify Lite.
 
 Open with one short paragraph announcing this.
 
@@ -77,17 +66,17 @@ Load `references/common-violations.md` when a suspicious pattern appears.
 
 | Group | Key concern |
 |-------|-------------|
-| **H** Handshake | Per-channel VALID stickiness; VALID never gated on READY |
+| **H** Handshake | Per-channel VALID stickiness; no waiting for READY; no combinatorial input/output paths |
 | **R** Reset | All VALID outputs LOW after reset; ARESETn polarity |
 | **S** Stability | Payload signals stable while VALID=1 & READY=0 (per channel) |
 | **W** Widths | Data=32/64; PROT=3-bit; RESP=2-bit; WSTRB=DATA/8 |
-| **A** Address | Address aligned to data-bus width |
+| **A** Address | Address decoding, byte lanes, and documented access policy |
 | **P** Response | RESP ∈ {OKAY=00, SLVERR=10, DECERR=11}; **EXOKAY=01 illegal** |
 | **O** Ordering | B after AW+W; R after AR; no inter-channel deadlock |
-| **X** Non-Lite | AWLEN, AWBURST, AWSIZE, AWID, etc. must NOT be present |
+| **X** Non-Lite | Classify burst behavior and optional ID reflection per interface |
 
 ### 5. Write the Report
-Follow the format in `references/report-template.md` exactly.
+Use `references/report-template.md`, adapting sections to the reviewed scope.
 
 ---
 
@@ -100,3 +89,11 @@ Follow the format in `references/report-template.md` exactly.
 - **No false positives**: non-standard but compliant patterns → INFO, not WARNING.
 - **Channel-aware**: when reporting, always specify *which channel*
   (e.g. "AW channel violation", not just "VALID violation").
+
+## Review boundaries
+
+- Identify each module and interface separately; do not mix widths or channel state across ports.
+- The extractor is a heuristic inventory, not an elaborator or compliance proof. Confirm widths, reset branches, aliases, and parameter overrides in RTL.
+- Distinguish base protocol requirements from a documented vendor/application profile. A profile restriction is not a universal AXI rule.
+- Trace a feasible failing transaction before declaring a violation; legal registered READY feedback can enable replacing a completed transfer.
+- Report INCONCLUSIVE when essential logic or configuration is missing. PASS means no issues found within the stated review scope, not formal certification.

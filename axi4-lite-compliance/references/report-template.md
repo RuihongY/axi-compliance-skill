@@ -14,7 +14,7 @@
 
 ## Report Skeleton
 
-```markdown
+````markdown
 ## AXI4-Lite Compliance Report
 
 ### Interface Summary
@@ -48,11 +48,11 @@
 
 #### 🟡 WARNING — Y issue(s) found
 
-**[W-1] Rule R2 — Reset Named `rst` Instead of `ARESETn`**
-- **Location**: Port declaration, line 8
-- **What's wrong**: Spec convention is `ARESETn` (active-low). Custom names
-  risk polarity mistakes when integrating with standard masters/interconnects.
-- **Fix**: Rename to `ARESETn`, or add an internal alias `wire ARESETn = ~rst;`.
+**[W-1] Documented Endpoint Compatibility Mismatch**
+- **Location**: Cite the actual RTL and endpoint requirement.
+- **Issue**: State the known contract and a feasible incompatible transfer.
+- **Fix**: Adapt the endpoint or bridge to the required behavior.
+- Do not instantiate this example without evidence of a mismatch.
 
 ---
 
@@ -62,8 +62,8 @@
 - **Channel**: Write Data (W), lines 60–63
 - **What's wrong**: Writes always overwrite all 32 bits; byte-enable
   information from WSTRB is discarded.
-- **Note**: Allowed by spec but masters using byte-level writes will silently
-  corrupt adjacent bytes.
+- **Note**: Classify the endpoint: a memory slave must honor strobes; a
+  register slave may document full-word-only writes or reject unsupported masks.
 
 ---
 
@@ -80,7 +80,8 @@ if (AWVALID & AWREADY) begin
   BRESP  <= 2'b00;
 end
 
-// AFTER (compliant):
+// AFTER (bookkeeping excerpt): reset these registers and gate request
+// acceptance by per-channel capacity until the B response is consumed.
 if (AWVALID & AWREADY) aw_done <= 1'b1;
 if (WVALID  & WREADY ) w_done  <= 1'b1;
 if (aw_done & w_done & ~BVALID) begin
@@ -170,10 +171,11 @@ endproperty
 assert property (rresp_legal)
   else $error("AXI-Lite: RRESP=EXOKAY is illegal");
 
-// All VALIDs low immediately after reset (R1)
+// Sampled reset check (R1). Select implemented channels and DUT outputs;
+// verify reset release timing separately.
 property valids_low_after_reset;
   @(posedge ACLK)
-  $rose(ARESETn) |-> !AWVALID && !WVALID && !BVALID && !ARVALID && !RVALID;
+  !ARESETn |-> (!AWVALID && !WVALID && !BVALID && !ARVALID && !RVALID);
 endproperty
 assert property (valids_low_after_reset);
 ```
@@ -184,13 +186,14 @@ assert property (valids_low_after_reset);
 
 | Result | Criteria |
 |--------|----------|
-| ✅ **PASS** | 0 CRITICAL, 0 WARNING |
-| ⚠️ **PASS WITH WARNINGS** | 0 CRITICAL, ≥1 WARNING |
-| ❌ **FAIL** | ≥1 CRITICAL |
+| ✅ **PASS** | No findings within a sufficiently complete, stated review scope |
+| ⚠️ **PASS WITH WARNINGS** | Sufficient review scope, no proven violations, documented compatibility concerns |
+| ❌ **FAIL** | At least one demonstrated violation (list any unchecked areas too) |
+| **INCONCLUSIVE** | No demonstrated violation, but essential logic/configuration is unavailable |
 
 **Result**: [Fill in]
 **Summary**: [1-2 sentence plain-language summary for the engineer]
-```
+````
 
 ---
 
@@ -205,3 +208,8 @@ assert property (valids_low_after_reset);
   regression catches.
 - Don't invent findings. If unsure, write "Cannot determine from this
   snippet — check [specific behavior]."
+
+- Instantiate assertions only for signals present on the selected interface.
+- State whether source behavior is asserted on DUT outputs or assumed on inputs in formal verification.
+- Sample reset behavior separately from stall properties; disable-iff alone does not test reset.
+- Do not claim simulation, formal proof, or model-evaluation success unless actually run.

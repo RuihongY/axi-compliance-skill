@@ -14,7 +14,7 @@
 
 ## Report Skeleton
 
-```markdown
+````markdown
 ## AXI4-Stream Compliance Report
 
 ### Interface Summary
@@ -42,11 +42,11 @@
 
 #### 🟡 WARNING — Y issue(s) found
 
-**[W-1] Rule R3 — Mixed Reset Styles**
-- **Location**: Lines 15 and 38
-- **What's wrong**: `m_tvalid` uses async reset; `m_tdata` uses sync reset.
-  Inconsistent reset may cause TDATA to hold stale values while TVALID goes low.
-- **Fix**: Standardize to asynchronous reset throughout (recommended for FPGA/ASIC).
+**[W-1] Documented Endpoint Compatibility Mismatch**
+- **Location**: Cite the actual RTL and endpoint requirement.
+- **Issue**: State the known contract and a feasible incompatible transfer.
+- **Fix**: Adapt the endpoint or bridge to the required behavior.
+- Do not instantiate this example without evidence of a mismatch.
 
 ---
 
@@ -106,23 +106,17 @@ endproperty
 assert property (tdata_stable)
   else $error("AXIS: TDATA changed while stalled");
 
-// Property 3: TVALID deasserted after reset (R1)
-property tvalid_after_reset;
+// Property 3: sampled reset check (R1); verify asynchronous timing separately
+property tvalid_during_reset;
   @(posedge ACLK)
-  $rose(ARESETn) |-> !TVALID;
+  !ARESETn |-> !TVALID;
 endproperty
-assert property (tvalid_after_reset)
+assert property (tvalid_during_reset)
   else $error("AXIS: TVALID not low after reset");
 
-// Property 4: No null bytes mid-packet (K1) — requires TKEEP and TLAST
-property no_mid_packet_null;
-  @(posedge ACLK) disable iff (!ARESETn)
-  (TVALID && TREADY && !TLAST) |-> (&TKEEP);
-endproperty
-assert property (no_mid_packet_null)
-  else $error("AXIS: Null byte (TKEEP=0) detected mid-packet");
+// Sparse TKEEP and constant-low TLAST are legal: no blanket mask assertion.
 
-// Property 5: TSTRB subset of TKEEP (K3)
+// Property 4: TSTRB subset of TKEEP (K3)
 property tstrb_subset_tkeep;
   @(posedge ACLK) disable iff (!ARESETn)
   TVALID |-> ((TSTRB & ~TKEEP) == '0);
@@ -137,13 +131,14 @@ assert property (tstrb_subset_tkeep)
 
 | Result | Criteria |
 |--------|----------|
-| ✅ **PASS** | 0 CRITICAL, 0 WARNING |
-| ⚠️ **PASS WITH WARNINGS** | 0 CRITICAL, ≥1 WARNING |
-| ❌ **FAIL** | ≥1 CRITICAL |
+| ✅ **PASS** | No findings within a sufficiently complete, stated review scope |
+| ⚠️ **PASS WITH WARNINGS** | Sufficient review scope, no proven violations, documented compatibility concerns |
+| ❌ **FAIL** | At least one demonstrated violation (list any unchecked areas too) |
+| **INCONCLUSIVE** | No demonstrated violation, but essential logic/configuration is unavailable |
 
 **Result**: [Fill in]
 **Summary**: [1-2 sentence plain-language summary for the engineer]
-```
+````
 
 ---
 
@@ -156,3 +151,8 @@ assert property (tstrb_subset_tkeep)
   compliant code.
 - Don't invent findings. If you are unsure, say "Cannot determine from this snippet —
   check [specific thing]."
+
+- Instantiate assertions only for signals present on the selected interface.
+- State whether source behavior is asserted on DUT outputs or assumed on inputs in formal verification.
+- Sample reset behavior separately from stall properties; disable-iff alone does not test reset.
+- Do not claim simulation, formal proof, or model-evaluation success unless actually run.
