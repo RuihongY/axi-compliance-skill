@@ -6,7 +6,8 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = ('axi4-stream-compliance', 'axi4-lite-compliance')
+SKILLS = ('axi4-stream-compliance', 'axi4-lite-compliance',
+          'axi4-full-compliance', 'ahb-compliance')
 
 
 def package(name):

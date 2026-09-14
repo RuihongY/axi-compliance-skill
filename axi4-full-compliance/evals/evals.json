@@ -1,0 +1,149 @@
+{
+  "skill_name": "axi4-full-compliance",
+  "evals": [
+    {
+      "id": 1,
+      "name": "w-before-aw",
+      "prompt": "AXI4 WVALID is offered before AWVALID. The slave accepts W into a buffer, later accepts AW, checks LEN/WLAST, then issues B. Is the ordering itself a violation?",
+      "expected_output": "Do not flag W-before-AW. Check independent buffering and O1 before BVALID; do not require simultaneous AW/W.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Do not flag W-before-AW. Check independent buffering and O1 before BVALID; do not require simultaneous AW/W."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "early-bvalid",
+      "prompt": "Review: always_ff @(posedge ACLK) if (AWVALID && AWREADY) BVALID <= 1; No W beat has been accepted.",
+      "expected_output": "Flag O1; AW alone cannot authorize BVALID. Fix requires accepted final W plus associated AW, preserving stalls.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag O1; AW alone cannot authorize BVALID. Fix requires accepted final W plus associated AW, preserving stalls."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "unaligned-page-end",
+      "prompt": "Check burst geometry only: 32-bit AXI4, ARADDR=0xFFF, ARSIZE=2, ARLEN=0, ARBURST=INCR.",
+      "expected_output": "Legal one-beat unaligned window in current page; no B3 failure. Unseen RTL remains outside scope.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal one-beat unaligned window in current page; no B3 failure. Unseen RTL remains outside scope."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "actual-4kb-crossing",
+      "prompt": "32-bit AXI4 AWADDR=0xFFF AWSIZE=2 AWLEN=1 AWBURST=INCR, both WSTRB masks zero. Is boundary crossing waived?",
+      "expected_output": "Flag B3. The next beat starts 0x1000. Zero WSTRB does not waive burst boundaries.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag B3. The next beat starts 0x1000. Zero WSTRB does not waive burst boundaries."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "wrap-nonbase-start",
+      "prompt": "AXI4 word WRAP4 starts 0x0C and visits 0x0C,0x00,0x04,0x08. Check address legality.",
+      "expected_output": "Legal B4 geometry; start aligned to size, not necessarily 16-byte region.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal B4 geometry; start aligned to size, not necessarily 16-byte region."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "wrap-three-beats",
+      "prompt": "AXI4 ARLEN=2 ARBURST=WRAP ARSIZE=2 ARADDR=0, data bus 32 bits.",
+      "expected_output": "Flag B1/B4: three beats is not a legal WRAP length.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag B1/B4: three beats is not a legal WRAP length."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "incr-256",
+      "prompt": "Check a 256-beat word INCR burst from 0, AXI4 ARLEN=255, 32-bit bus.",
+      "expected_output": "Legal geometry, within 4KB. Do not apply AXI3 or FIXED 16-beat limit.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal geometry, within 4KB. Do not apply AXI3 or FIXED 16-beat limit."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "accepted-beat-counter",
+      "prompt": "Review AXI4 read sender: if (RVALID) begin beat <= beat+1; RLAST <= beat==ARLEN; end; RREADY can remain low.",
+      "expected_output": "Flag H1/B6/O2: count updates while stalled and LAST may change. Update on acceptance and track per transaction.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag H1/B6/O2: count updates while stalled and LAST may change. Update on acceptance and track per transaction."
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "name": "interleaved-read-ids",
+      "prompt": "AR ID=1 LEN=1, then AR ID=2 LEN=0 accepted. Accepted R beats: (RID=1,LAST=0),(RID=2,LAST=1),(RID=1,LAST=1).",
+      "expected_output": "Legal interleaving across IDs; do not use a single global read counter or ban cross-ID reorder.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal interleaving across IDs; do not use a single global read counter or ban cross-ID reorder."
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "write-interleaving",
+      "prompt": "Two AXI4 write bursts AWID=1 LEN=1 and AWID=2 LEN=1. Sender alternates their W beats using an internal tag, with no tag on W ports.",
+      "expected_output": "Flag O4: AXI4 write data bursts cannot interleave. Internal tags do not reach the receiver.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag O4: AXI4 write data bursts cannot interleave. Internal tags do not reach the receiver."
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "name": "exclusive-success",
+      "prompt": "An AXI4 exclusive-capable slave returns EXOKAY on successful exclusive read and write. The monitor checks matched ID/address/attributes.",
+      "expected_output": "Do not ban EXOKAY as in Lite. Review A7 restrictions and monitor evidence before concluding whole-interface PASS.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Do not ban EXOKAY as in Lite. Review A7 restrictions and monitor evidence before concluding whole-interface PASS."
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "name": "partial-not-proof",
+      "prompt": "Does this pass AXI4 Full? module dut(input [7:0] AWLEN, input [2:0] AWSIZE); endmodule",
+      "expected_output": "INCONCLUSIVE. Correct field widths do not establish channel or burst behavior.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "INCONCLUSIVE. Correct field widths do not establish channel or burst behavior."
+        }
+      ]
+    }
+  ]
+}
