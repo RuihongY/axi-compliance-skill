@@ -33,7 +33,7 @@
       "id": 2,
       "name": "tdata-width-not-byte-aligned",
       "prompt": "Review this AXI4-Stream interface for spec compliance:\n\nmodule adc_axis_source #(\n  parameter DATA_W = 12\n) (\n  input  wire           ACLK,\n  input  wire           ARESETn,\n  output reg            TVALID,\n  input  wire           TREADY,\n  output reg [DATA_W-1:0] TDATA,\n  output reg [DATA_W/8-1:0] TKEEP,\n  output reg            TLAST\n);\n  always @(posedge ACLK or negedge ARESETn) begin\n    if (!ARESETn) begin\n      TVALID <= 1'b0;\n      TDATA  <= '0;\n      TKEEP  <= '0;\n      TLAST  <= 1'b0;\n    end else if (adc_valid && !TVALID) begin\n      TVALID <= 1'b1;\n      TDATA  <= adc_data;\n      TKEEP  <= '1;\n      TLAST  <= 1'b1;\n    end else if (TVALID && TREADY) begin\n      TVALID <= 1'b0;\n    end\n  end\nendmodule",
-      "expected_output": "Report should flag CRITICAL W1 (TDATA=12 bits, not a multiple of 8) and CRITICAL W2 (TKEEP=12/8=1 bit, wrong sizing). Should recommend padding TDATA to 16 bits. Reset and handshake behavior is compliant — should NOT be flagged.",
+      "expected_output": "Flag CRITICAL W1 for 12-bit TDATA and recommend padding to 16 with two qualifier bits. Do not invent an independent W2 finding from a fractional byte count; reset and the shown holding behavior are correct.",
       "assertions": [
         {
           "type": "contains",
@@ -70,7 +70,11 @@
         },
         {
           "type": "contains_any",
-          "values": ["C1", "H2", "combinatorial"],
+          "values": [
+            "C1",
+            "H2",
+            "combinatorial"
+          ],
           "description": "Must identify the combinatorial dependency issue"
         },
         {
@@ -98,13 +102,76 @@
         },
         {
           "type": "contains_any",
-          "values": ["PASS", "✅"],
+          "values": [
+            "PASS",
+            "✅"
+          ],
           "description": "Must give PASS or PASS WITH WARNINGS"
         },
         {
           "type": "contains",
           "value": "assert property",
           "description": "Must still provide SVA assertions even for passing code"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "legal-24-bit-sparse-stream",
+      "prompt": "Review only the width and qualifier legality of this AXI4-Stream fragment: output [23:0] TDATA; output [2:0] TKEEP; output [2:0] TSTRB; assign TKEEP=3'b101; assign TSTRB=3'b101; assign TLAST=1'b0;",
+      "expected_output": "24-bit data, sparse mask, null lanes before TLAST, and constant-low TLAST are legal. Do not recommend filling null lanes. Handshake/reset remain unreviewed.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "24-bit data, sparse mask, null lanes before TLAST, and constant-low TLAST are legal. Do not recommend filling null lanes. Handshake/reset remain unreviewed."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "position-bytes-without-tkeep",
+      "prompt": "Review these AXI4-Stream qualifiers; TKEEP is omitted: output [31:0] TDATA; output [3:0] TSTRB; assign TSTRB=4'b0101;",
+      "expected_output": "Omitted TKEEP defaults to ones, and TSTRB zeros mark position bytes. No warning for the omission alone. Do not claim whole-interface PASS.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Omitted TKEEP defaults to ones, and TSTRB zeros mark position bytes. No warning for the omission alone. Do not claim whole-interface PASS."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "interleaved-streams",
+      "prompt": "On successive accepted AXI4-Stream beats, (TID,TDEST,TLAST) is (0,0,0), (1,0,1), (0,0,1). Payload and sidebands are held during stalls. Does this violate packet identity?",
+      "expected_output": "Legal interleaving of distinct streams; packet tracking is per TID/TDEST. Do not require waiting for TLAST before every ID change without an endpoint restriction.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Legal interleaving of distinct streams; packet tracking is per TID/TDEST. Do not require waiting for TLAST before every ID change without an endpoint restriction."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "ready-feedback-in-elastic-register",
+      "prompt": "Review the handshake update only: always_ff @(posedge ACLK) if (!ARESETn) TVALID <= 0; else if (!TVALID || TREADY) begin TVALID <= src_valid; TDATA <= src_data; end",
+      "expected_output": "READY feedback permits replacing a consumed beat; TVALID/payload hold on stalls. Do not flag H2/C1 merely because TREADY appears in registered enable logic. Upstream acceptance and omitted signals require separate review.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "READY feedback permits replacing a consumed beat; TVALID/payload hold on stalls. Do not flag H2/C1 merely because TREADY appears in registered enable logic. Upstream acceptance and omitted signals require separate review."
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "name": "reserved-qualifier-combination",
+      "prompt": "Review this active Stream beat: TVALID=1, TKEEP=4'b0011, TSTRB=4'b0111.",
+      "expected_output": "Flag K3: lane 2 uses reserved TKEEP=0/TSTRB=1. Legal sparse masks do not legalize that combination.",
+      "assertions": [
+        {
+          "type": "rubric",
+          "description": "Flag K3: lane 2 uses reserved TKEEP=0/TSTRB=1. Legal sparse masks do not legalize that combination."
         }
       ]
     }

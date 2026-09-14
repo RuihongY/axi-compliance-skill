@@ -19,20 +19,20 @@ Each skill produces:
 - 🟡 **WARNING** — Non-recommended patterns risking interoperability issues
 - 🔵 **INFO** — Observations and best-practice suggestions
 - ✅ **Corrected code snippets** for every CRITICAL finding
-- 📋 **SVA assertion templates** ready to drop into your testbench
+- 📋 **SVA assertion templates** to adapt to the selected interface
 
 ---
 
 ## Coverage summary
 
-### `axi4-stream-compliance` — 25 rules across 8 categories
+### `axi4-stream-compliance` — AXI4-Stream baseline (IHI0051A)
 Handshake, Reset, Signal Stability, Widths, TKEEP/TSTRB, TLAST framing,
 Combinatorial dependency, Optional signals.
 
-### `axi4-lite-compliance` — 30+ rules across 8 categories
+### `axi4-lite-compliance` — AXI4-Lite baseline (IHI0022H)
 Per-channel handshake (×5), Reset, Per-channel stability, Widths,
-Address alignment, Response codes (incl. EXOKAY illegal in Lite),
-Inter-channel ordering & deadlock avoidance, Non-Lite signal detection.
+Address/byte-lane handling, Response codes (incl. EXOKAY illegal in Lite),
+Inter-channel ordering & deadlock avoidance, Interface classification and optional ID reflection.
 
 ---
 
@@ -79,6 +79,43 @@ Each skill follows the same layout:
 └── evals/
     └── evals.json                  # Test cases (compliant + violating RTL)
 ```
+
+---
+
+## Development and validation
+
+Python 3.9+ is sufficient for the extractors, regression tests, and packaging:
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/build_skills.py
+python3 scripts/build_skills.py --check
+```
+
+Edit the skill folders first, then rebuild both `.skill` archives. Packaging
+is deterministic and self-contained; CI checks that committed archives match
+the sources. The automated tests cover extractor behavior and package integrity.
+
+The `evals/evals.json` files are **model review cases**, not RTL simulations or
+results from these Python tests. For a behavioral evaluation, give an assistant
+the selected skill and each prompt, save its answer, then judge it against
+`expected_output`. Existing text checks are smoke checks only; `rubric` assertions
+require semantic review. New cases exercise legal sparse streams, ID reflection,
+capacity backpressure, READY timing, and incomplete inputs. They have not been
+model-run as part of the Python regression suite.
+
+The extractors are conservative regex helpers, not Verilog elaborators. They
+handle individual port declarations and simple decimal parameter/range forms;
+comma-grouped ports, typedefs, macros, parameter overrides, and multiple modules
+or interfaces need manual verification. Unsupported width expressions remain
+unknown. Reset hints do not prove reset behavior (`tvalid_cleared_in_reset` is
+`null` pending manual analysis). A positive `if (resetn)` is not evidence of an
+active-high reset.
+
+Reports distinguish base-protocol violations from documented endpoint/profile
+requirements. Legal 24-bit Stream data, sparse TKEEP, constant-low TLAST, and
+Lite ID reflection must not fail solely for those features. An incomplete
+review is **INCONCLUSIVE**, and PASS is limited to the stated review scope.
 
 ---
 

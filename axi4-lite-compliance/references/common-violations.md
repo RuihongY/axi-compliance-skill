@@ -183,11 +183,13 @@ module slave #(parameter DATA_W = 64) (
 ---
 
 ## V7 — Slave Ignores WSTRB
-**Rule**: Not a hard violation, but a common bug
-**Frequency**: Very common
+**Rule**: B1.1.3 — distinguish memory access from register policy
+**Review**: Memory-access slaves must honor strobes. A register slave may
+ignore strobes or reject unsupported masks; report a bug only against its
+documented contract.
 
 ```verilog
-// ⚠️ WARNING — write always updates all 32 bits, ignoring WSTRB
+// Potential application bug — write always updates all 32 bits, ignoring WSTRB
 if (w_handshake)
   reg_file[awaddr_capt] <= WDATA;
 
@@ -203,51 +205,35 @@ end
 ---
 
 ## V8 — Inter-Channel Deadlock (AWREADY Waiting on BREADY)
-**Rule**: O3
-**Frequency**: Rare but catastrophic when it happens
+**Rules**: O3, H5
 
 ```verilog
-// ❌ VIOLATION — creates deadlock
-// Designer reasoning: "Don't accept a new write until the master takes the last B response"
-assign AWREADY = ~BVALID;
-
-// Deadlock case: master raises BREADY only after seeing BVALID.
-// 1. Master asserts AWVALID, waits for AWREADY.
-// 2. Slave keeps AWREADY=0 because BVALID=0 (no outstanding response).
-// 3. Without AW handshake, no write happens, no B is generated.
-// 4. BVALID never asserts, master never sees response, BREADY may stay low.
-// 5. → AWREADY stays low forever → deadlock.
-
-// ✅ FIXED — single-outstanding by tracking an in-flight flag
-reg in_flight;
-assign AWREADY = AWVALID & ~in_flight;
-always @(posedge ACLK)
-  if (!ARESETn)            in_flight <= 0;
-  else if (AW & W done)    in_flight <= 1;
-  else if (BVALID & BREADY) in_flight <= 0;
+// Bad dependency: even registered logic with this condition can deadlock.
+assign AWREADY = aw_capacity & BREADY;
 ```
+A legal master holds AWVALID/WVALID high but waits for BVALID before raising
+BREADY. If no AW can be accepted before BREADY, no BVALID can be generated.
+The assign also independently violates H5.
 
----
+```verilog
+// Legal capacity backpressure, assuming both RHS signals are local registers.
+assign AWREADY = !aw_captured && !BVALID;
+```
+Here BVALID=0 permits acceptance; BVALID=1 pauses new requests until the
+pending response is consumed. Do not label this condition deadlock. Track
+AW and W storage separately and hold captured payload until consumed.
 
-## V9 — Burst Signals Present (Not AXI4-Lite!)
+## V9 — Classify Wrapper and Bridge Ports
 **Rule**: X1
-**Frequency**: Common in copy-paste from AXI4 Full examples
 
 ```verilog
-// ❌ VIOLATION — these signals do not belong on AXI4-Lite
-module my_lite_slave (
-  input        AWVALID, AWREADY,
-  input [ 7:0] AWLEN,    // ← burst length: Full AXI only
-  input [ 2:0] AWSIZE,   // ← burst size: Full AXI only
-  input [ 1:0] AWBURST,  // ← burst type: Full AXI only
-  input [ 3:0] AWID,     // ← transaction ID: Full AXI only
-  ...
-);
-
-// ✅ FIXED — strip them out; for AXI4-Lite, only AWADDR + AWPROT on AW
+// An ID-reflecting compatibility wrapper may legally expose these.
+input  [3:0] AWID;
+output [3:0] BID;
 ```
-
----
+Check that BID reflects the accepted AWID. For AWLEN/AWSIZE/AWBURST ports,
+inspect constraints and conversion behavior. A Full-to-Lite bridge must
+have Full AXI signals on one side; do not remove them as a supposed fix.
 
 ## V10 — Read Data Updated During Stall
 **Rule**: S1

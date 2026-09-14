@@ -152,30 +152,18 @@ module axis_master #(
 
 ---
 
-## V6 — Null Byte Mid-Packet
-**Rule**: K1
-**Frequency**: Rare but critical — breaks downstream packet parsers
+## V6 — Legal Sparse Transfers (Do Not Flag)
+**Rules**: K1, K2
 
 ```verilog
-// ❌ VIOLATION — sending sparse TKEEP while TLAST=0
-always @(posedge ACLK or negedge ARESETn) begin
-  if (!ARESETn) begin
-    TKEEP <= '0; TLAST <= 0; TVALID <= 0;
-  end else if (start) begin
-    TVALID <= 1;
-    TLAST  <= 0;
-    TKEEP  <= 4'b0011;  // BUG: mid-packet null bytes in lanes [3:2]
-    TDATA  <= payload;
-  end
-end
-
-// ✅ FIXED — mid-packet beats must have all TKEEP bits set
-    TKEEP  <= 4'b1111;  // all bytes valid when TLAST=0
-// Only on the last beat is partial TKEEP allowed:
-    if (last_beat) TKEEP <= partial_keep_mask;
+// Legal byte qualifiers, including before the last beat.
+assign TKEEP = 4'b0101;
+assign TSTRB = 4'b0101;
+assign TLAST = 1'b0;
 ```
-
----
+Do not "fix" sparse masks by setting TKEEP to all ones: that introduces
+bytes the source did not intend to transfer. Apply a narrower mask policy
+only when the user supplies that endpoint's requirements.
 
 ## V7 — TSTRB Set Where TKEEP Is Clear
 **Rule**: K3
@@ -192,41 +180,33 @@ assign TKEEP = 4'b0011;  // byte lane 2 null but TSTRB says it's a data byte
 
 ---
 
-## V8 — TLAST Tied Low (Packet Never Ends)
+## V8 — Constant TLAST Needs Context
 **Rule**: L3
-**Frequency**: Common in "quick integration" code
 
 ```verilog
-// ❌ WARNING — packet framing disabled
-module axis_source (
-  output TVALID, TREADY, TDATA,
-  output TLAST
-);
-  assign TLAST = 1'b0;  // packet never ends — downstream may buffer forever
+assign TLAST = 1'b0; // legal for an unframed stream
 ```
+If a specific downstream component waits for TLAST before draining its
+buffer, report that integration mismatch. Without that evidence, do not
+invent a protocol failure.
 
----
-
-## V9 — Mixed Reset Styles
+## V9 — Mixed Reset Styles Are Not Automatically Violations
 **Rule**: R3
-**Frequency**: Common in large modules edited by multiple engineers
 
 ```verilog
-// ❌ WARNING — mixed async and sync resets in same module
-always @(posedge ACLK or negedge ARESETn)   // async
+always @(posedge ACLK or negedge ARESETn)
   if (!ARESETn) TVALID <= 0;
   else          TVALID <= nxt_valid;
-
-always @(posedge ACLK)                       // sync
+always @(posedge ACLK)
   if (!ARESETn) TDATA <= '0;
   else          TDATA <= nxt_data;
 ```
-
----
+Review reset release and stall handling independently. Different reset
+styles alone do not establish a failure.
 
 ## V10 — TDATA Width Not Multiple of 8
 **Rule**: W1
-**Frequency**: Seen in DSP datapaths where samples are 12 or 24-bit
+**Frequency**: Seen in DSP datapaths where samples are 12-bit (24-bit samples already fit a legal byte width)
 
 ```verilog
 // ❌ VIOLATION — 12-bit TDATA is not byte-aligned
@@ -240,22 +220,14 @@ module adc_stream (
 
 ---
 
-## V11 — TID/TDEST Changes Mid-Packet
-**Rule**: L2
-**Frequency**: Seen in mux/arbitration logic
+## V11 — Interleaving Is Not Stall Instability
+**Rules**: L2, S1
 
-```verilog
-// ❌ VIOLATION — TID updated before TLAST seen
-always @(posedge ACLK) begin
-  if (switch_stream) begin
-    TID   <= new_tid;   // BUG: changes TID while packet in flight
-    TDATA <= new_data;
-  end
-end
-
-// ✅ FIXED — only change TID after TLAST handshake
-always @(posedge ACLK) begin
-  if (TVALID & TREADY & TLAST)  // packet boundary
-    TID <= next_tid;
-end
+```text
+Accepted beat: TID=0, TDEST=0, TLAST=0
+Accepted beat: TID=1, TDEST=0, TLAST=1
+Accepted beat: TID=0, TDEST=0, TLAST=1
 ```
+This can legally interleave two streams. A change to TID while a beat is
+stalled instead violates S1. Do not conflate these situations or force
+arbitration to packet boundaries without a stated endpoint restriction.

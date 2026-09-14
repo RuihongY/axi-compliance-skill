@@ -8,6 +8,8 @@ their widths, direction, and reset style. Claude reads this before
 running the compliance checks so it doesn't have to parse RTL manually.
 """
 
+from __future__ import annotations
+
 import re
 import sys
 import json
@@ -31,20 +33,16 @@ PORT_RE = re.compile(
 )
 
 PARAM_RE = re.compile(
-    r'\bparameter\b\s+(?:integer\s+)?(\w+)\s*=\s*(\d+)',
+    r'\bparameter\b\s+(?:integer\s+)?(\w+)\s*=\s*([0-9]+)\s*(?=[,;)])',
     re.IGNORECASE
 )
 
 RESET_ASYNC_RE = re.compile(
-    r'always\s*@\s*\([^)]*negedge\s+\w*reset\w*',
+    r'always(?:_ff)?\s*@\s*\([^)]*negedge\s+\w*reset\w*',
     re.IGNORECASE
 )
 RESET_SYNC_RE = re.compile(
-    r'always\s*@\s*\(\s*posedge\s+\w*clk\w*\s*\)',
-    re.IGNORECASE
-)
-RESET_HIGH_RE = re.compile(
-    r'if\s*\(\s*(?:ARESETN|ARESETn|resetn|rst_n)\s*\)',
+    r'always(?:_ff)?\s*@\s*\(\s*posedge\s+\w*clk\w*\s*\)',
     re.IGNORECASE
 )
 RESET_LOW_RE = re.compile(
@@ -52,34 +50,36 @@ RESET_LOW_RE = re.compile(
     re.IGNORECASE
 )
 
-TVALID_CLEARED_RE = re.compile(
-    r'TVALID\s*<=\s*1\'b0',
-    re.IGNORECASE
-)
-
-TVALID_IN_RESET_RE = re.compile(
-    r'(?:ARESETN|ARESETn|resetn|rst_n)[^;]*\n[^;]*TVALID\s*<=\s*1\'b0',
-    re.IGNORECASE | re.DOTALL
-)
 
 
-def resolve_width(expr: str, params: dict) -> int | None:
-    """Try to evaluate a width expression like 'DATA_WIDTH-1:0' → width."""
+
+def resolve_width(expr, params):
+    """Resolve simple packed ranges conservatively; unsupported bounds stay unknown."""
     if expr is None:
         return 1
-    # Simple N:0 pattern
-    m = re.match(r'(\d+)\s*:\s*0', expr.strip())
-    if m:
-        return int(m.group(1)) + 1
-    # Param-based: DATA_WIDTH-1:0
-    m = re.match(r'(\w+)\s*-\s*1\s*:\s*0', expr.strip())
-    if m and m.group(1) in params:
-        return params[m.group(1)]
-    # Param/8-1:0 → means TDATA_WIDTH/8
-    m = re.match(r'(\w+)\s*/\s*8\s*-\s*1\s*:\s*0', expr.strip())
-    if m and m.group(1) in params:
-        return params[m.group(1)] // 8
-    return None  # unknown
+
+    def bound(value):
+        value = value.strip()
+        if re.fullmatch(r"[0-9]+", value):
+            return int(value)
+        if value in params:
+            return params[value]
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z_0-9]*)(?:\s*/\s*([1-9][0-9]*))?\s*-\s*1", value)
+        if match and match[1] in params:
+            return params[match[1]] // int(match[2] or 1) - 1
+        return None
+
+    parts = expr.split(":")
+    if len(parts) != 2:
+        return None
+    msb, lsb = map(bound, parts)
+    return abs(msb - lsb) + 1 if msb is not None and lsb is not None else None
+
+
+def strip_comments(src):
+    """Hide comments and strings without changing line offsets."""
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"',
+                  lambda m: re.sub(r"[^\n]", " ", m[0]), src, flags=re.S)
 
 
 def is_axis_signal(name: str) -> bool:
@@ -95,7 +95,10 @@ def analyze(filepath: str) -> dict:
     if not path.exists():
         return {"error": f"File not found: {filepath}"}
 
-    src = path.read_text(errors="replace")
+    try:
+        src = strip_comments(path.read_text(errors="replace"))
+    except OSError as exc:
+        return {"error": f"Cannot read {filepath}: {exc}"}
 
     # --- Parameters ---
     params = {}
@@ -119,10 +122,9 @@ def analyze(filepath: str) -> dict:
     has_async  = bool(RESET_ASYNC_RE.search(src))
     has_sync   = bool(RESET_SYNC_RE.search(src))
     active_low = bool(RESET_LOW_RE.search(src))
-    active_high= bool(RESET_HIGH_RE.search(src)) and not active_low
 
     # --- TVALID reset check ---
-    tvalid_cleared_in_reset = bool(TVALID_IN_RESET_RE.search(src))
+    tvalid_cleared_in_reset = None  # Requires branch/state analysis, not regex
 
     # --- TDATA width compliance ---
     tdata_width = None
@@ -138,7 +140,7 @@ def analyze(filepath: str) -> dict:
         tdata_ok = (tdata_width % 8 == 0)
 
     tkeep_ok = None
-    if tdata_width and tkeep_width:
+    if tdata_ok and tkeep_width:
         tkeep_ok = (tkeep_width == tdata_width // 8)
 
     # --- Build report ---
@@ -149,7 +151,7 @@ def analyze(filepath: str) -> dict:
         "axis_signals": signals,
         "reset": {
             "style": "async" if has_async else ("sync" if has_sync else "unknown"),
-            "polarity": "active_low" if active_low else ("active_high" if active_high else "unknown"),
+            "polarity": "active_low" if active_low else "unknown",
             "tvalid_cleared_in_reset": tvalid_cleared_in_reset,
         },
         "quick_checks": {
@@ -158,7 +160,7 @@ def analyze(filepath: str) -> dict:
             "tkeep_width": tkeep_width,
             "tkeep_matches_tdata_bytes": tkeep_ok,
         },
-        "notes": [],
+        "notes": ["Heuristic inventory only: confirm grouped declarations, module/interface boundaries, parameters, and reset behavior manually."],
     }
 
     # Quick-check notes
@@ -170,14 +172,6 @@ def analyze(filepath: str) -> dict:
         report["notes"].append(
             f"CRITICAL W2: TKEEP width={tkeep_width} should be {tdata_width}//8={tdata_width//8 if tdata_width else '?'}"
         )
-    if not tvalid_cleared_in_reset and "TVALID" in signals:
-        report["notes"].append(
-            "POSSIBLE R1: TVALID does not appear to be cleared in reset block — verify manually"
-        )
-    if active_high:
-        report["notes"].append(
-            "WARNING R2: Reset appears active-HIGH — AXI4-Stream requires active-low ARESETn"
-        )
 
     return report
 
@@ -188,3 +182,4 @@ if __name__ == "__main__":
         sys.exit(1)
     result = analyze(sys.argv[1])
     print(json.dumps(result, indent=2))
+    sys.exit(1 if "error" in result else 0)

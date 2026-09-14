@@ -1,5 +1,9 @@
 # AXI4-Stream Protocol Rules Reference
-*Based on ARM IHI0051B (AMBA AXI-Stream Protocol Specification)*
+*Baseline: Arm IHI0051A (AXI4-Stream). Section numbers below refer to issue A.*
+
+Sources: [Arm specification entry](https://developer.arm.com/documentation/ihi0051/a),
+[Arm-authored PDF mirror](https://zipcpu.com/doc/axi-stream.pdf).
+Vendor packet profiles can impose additional restrictions; identify them separately.
 
 ---
 
@@ -15,14 +19,14 @@
 
 ---
 
-## H — Handshake Rules {#h-handshake}
+<a id="h-handshake"></a>
+## H — Handshake Rules
 
 ### H1 — TVALID Stickiness (CRITICAL if violated)
 **Rule**: Once a Master asserts TVALID, it MUST NOT deassert TVALID until the
 handshake completes (i.e., until the clock edge where both TVALID=1 and TREADY=1).
 
-**ARM Spec**: Section 2.2.1 — "A Transmitter is not permitted to withdraw a
-transfer once TVALID has been asserted."
+**ARM Spec**: Section 2.2.1.
 
 **RTL check**: In every `always` block driving TVALID, confirm that TVALID is
 only cleared on reset or on the cycle where `TVALID & TREADY` is true.
@@ -76,46 +80,22 @@ TVALID=1 AND TREADY=1.
 
 ---
 
-## R — Reset Rules {#r-reset}
+<a id="r-reset"></a>
+## R — Reset Rules
 
-### R1 — TVALID Must Be LOW After Reset (CRITICAL if violated)
-**Rule**: After deassertion of ARESETn (or after synchronous reset), TVALID
-must be driven LOW. The Master must not assert TVALID until reset is fully
-deasserted.
+### R1 — TVALID Reset Behavior (CRITICAL if violated)
+Check TVALID during reset and at reset release (§2.7). A combinatorial VALID
+can be reset through its source state; a literal TVALID reset assignment is
+not required. Check the signal behavior, not just assignment syntax.
 
-**ARM Spec**: Section 2.7 — "A master interface must drive TVALID LOW for the
-first clock cycle after ARESETn goes HIGH."
+### R2 — Reset Polarity and Mapping
+The interface reset is active-low. Custom RTL names and an internal inverted
+reset are legal; trace the actual mapping before reporting a polarity bug.
 
-**RTL check**: The reset branch of every TVALID register must set it to 0.
-
-```verilog
-// CORRECT
-always @(posedge ACLK or negedge ARESETn)
-  if (!ARESETn) TVALID <= 1'b0;   // ← required
-  else          TVALID <= next_valid;
-
-// VIOLATION — TVALID not reset
-always @(posedge ACLK)
-  TVALID <= next_valid;
-```
-
----
-
-### R2 — ARESETn Must Be Active-Low (WARNING if polarity wrong)
-**Rule**: The global reset is named ARESETn and is active-LOW.
-
-**RTL check**: Reset sensitivity in `always` blocks should use `negedge ARESETn`
-(async) or `if (!ARESETn)` / `if (~ARESETn)` (sync). Signals named `ARESETN`
-used as active-high are non-standard.
-
----
-
-### R3 — Reset Style Consistency (WARNING if mixed)
-**Rule**: All flip-flops in the same clock domain should use the same reset style
-(all synchronous OR all asynchronous). Mixing within the same module is a common
-source of CDC and synthesis issues.
-
----
+### R3 — Reset Implementation Review (INFO)
+Mixed synchronous/asynchronous register resets are not themselves an AXI
+violation. Check externally visible VALID reset behavior and synchronous
+reset release; do not require payload registers to share a reset style.
 
 ### R4 — TREADY After Reset (INFO)
 **Rule**: The spec does not mandate a specific reset value for TREADY. A Slave
@@ -123,7 +103,8 @@ may come out of reset with TREADY=0 or TREADY=1.
 
 ---
 
-## S — Signal Stability Rules {#s-signal-stability}
+<a id="s-signal-stability"></a>
+## S — Signal Stability Rules
 
 ### S1 — Payload Stability During Stall (CRITICAL if violated)
 **Rule**: While TVALID=1 and TREADY=0 (stall condition), ALL the following
@@ -162,17 +143,12 @@ See H1. All payload signals stable implies TVALID itself also stable (=1).
 
 ---
 
-## W — Signal Width Rules {#w-signal-widths}
+<a id="w-signal-widths"></a>
+## W — Signal Width Rules
 
 ### W1 — TDATA Width Must Be a Multiple of 8 Bits (CRITICAL if violated)
-**Rule**: TDATA must be N×8 bits wide (byte-aligned). Widths of 7, 15, 24, etc.
-are non-compliant.
-
-**ARM Spec**: Section 2.3 — data bus width defined in bytes.
-
-**RTL check**: `(TDATA_WIDTH % 8 == 0)` and TDATA_WIDTH ∈ {8, 16, 32, 64, 128, 256, 512, 1024}.
-
----
+**Check**: A present TDATA has positive width divisible by 8. A 24-bit or
+40-bit bus is legal; do not impose a power-of-two whitelist. See §2.1 and A.1.
 
 ### W2 — TKEEP Width Must Equal TDATA_WIDTH / 8 (CRITICAL if violated)
 **Rule**: Each TKEEP bit corresponds to one byte of TDATA.
@@ -202,81 +178,53 @@ Wider values are not prohibited but may cause interoperability issues.
 
 ---
 
-## K — TKEEP / TSTRB Rules {#k-tkeep-tstrb}
+<a id="k-tkeep-tstrb"></a>
+## K — TKEEP / TSTRB Rules
 
-### K1 — No Null Bytes Mid-Packet (CRITICAL if violated)
-**Rule**: When TLAST=0 (packet not yet finished), ALL bits of TKEEP must be 1.
-Null bytes (TKEEP=0 for a byte lane) are only allowed on the last beat (TLAST=1).
+### K1 — Null Bytes Are Permitted (INFO)
+Sparse or all-zero TKEEP is legal, including before TLAST. Do not add a
+base-protocol assertion requiring full TKEEP on non-final beats (§2.4.1).
 
-**ARM Spec**: Section 2.4 — Byte qualifiers
-
-**RTL check**: If TLAST is driven LOW while TKEEP has any zero bits, that is a violation.
-
-```verilog
-// VIOLATION example (conceptual):
-// TLAST=0, TKEEP=8'b00001111  ← mid-packet null bytes
-```
-
----
-
-### K2 — Null Bytes at Last Beat Ordering (WARNING)
-**Rule**: On the last beat (TLAST=1), null bytes (TKEEP=0) must only occupy
-the most-significant byte lanes (high-order positions). Having null bytes
-below valid bytes is non-standard.
-
-Example for 4-byte bus, 3 valid bytes:
-- CORRECT: `TKEEP = 4'b0111` (null byte at MSB)
-- NON-STANDARD: `TKEEP = 4'b1110` (null byte at LSB)
-
----
+### K2 — Sparse Byte Lanes Are Permitted (INFO)
+Do not require a contiguous low-lane TKEEP mask. Such restrictions require
+an explicit endpoint profile, including on the last beat (§2.4).
 
 ### K3 — TSTRB Must Be Subset of TKEEP (CRITICAL if violated)
-**Rule**: `TSTRB & ~TKEEP` must always be zero — i.e., a byte cannot be a
+**Rule**: When TVALID is HIGH, `TSTRB & ~TKEEP` must be zero — i.e., a byte cannot be a
 data/position byte if its TKEEP bit is 0.
 `TSTRB[i]=1` is only valid when `TKEEP[i]=1`.
 
 ---
 
-### K4 — TSTRB Without TKEEP (WARNING)
-**Rule**: If TSTRB is present but TKEEP is absent, position bytes are not
-supported by the interface. This is an unusual configuration — flag for review.
+### K4 — TSTRB Without TKEEP (INFO)
+Omitted TKEEP defaults to all ones; TSTRB can still identify position bytes.
+Omitted TSTRB defaults to TKEEP (§3.1.2).
 
----
-
-## L — TLAST / Packet Framing Rules {#l-tlast}
+<a id="l-tlast"></a>
+## L — TLAST / Packet Framing Rules
 
 ### L1 — TLAST Marks End of Packet (INFO)
-**Rule**: TLAST is asserted on the last beat of a packet. It is optional — if
-absent, every transfer is implicitly a single-beat packet.
+Preserve packet boundaries. Missing TLAST does not automatically imply
+single-beat packets; check the chosen default or generated boundary policy (§3.1.3).
 
----
+### L2 — Packet Identity and Interleaving
+Track packets by (TID, TDEST). Beat-level interleaving between streams is
+permitted; an ID change alone is not a violation (§2.5, §4.1).
+Any restriction on interleaving must come from the endpoint contract.
+All sidebands still obey stall stability (S1).
 
-### L2 — TID/TDEST Must Not Change Mid-Packet (CRITICAL if violated)
-**Rule**: When `Continuous_Packets` mode is used, TID and TDEST must not change
-while TLAST=0. For general interconnects, changing TID/TDEST mid-packet causes
-interleaving issues.
+### L3 — TLAST Tied LOW (INFO unless a contract conflicts)
+Constant-low TLAST is a supported choice (§3.1.3). Report a compatibility
+problem only when a known consumer needs boundaries for progress.
 
-**RTL check**: If TID or TDEST is updated without a preceding TLAST=1 handshake,
-that is a violation in continuous-packet contexts.
-
----
-
-### L3 — TLAST Tied LOW (WARNING)
-**Rule**: Tying TLAST permanently LOW means packets never end. This is technically
-allowed only for infinite byte-stream interfaces with no packet boundaries.
-In most IP designs, this is a bug.
-
-**RTL check**: `assign TLAST = 1'b0;` — flag as warning with explanation.
-
----
-
-### L4 — TLAST Must Change Only on Transfer (relates to S1)
+### L4 — TLAST Must Hold During Stall (relates to S1)
 **Rule**: TLAST is a payload signal. While TVALID=1 and TREADY=0, TLAST
 must not change (covered by S1 but worth calling out explicitly).
 
 ---
 
-## C — Combinatorial Dependency Rules {#c-combinatorial}
+<a id="c-combinatorial"></a>
+## C — Combinatorial Dependency Rules
 
 ### C1 — TVALID Must Not Combinatorially Depend on TREADY (CRITICAL)
 **Rule**: A Master driving TVALID must not create a path where TVALID is
@@ -309,16 +257,16 @@ assign TREADY = ~fifo_full & TVALID;  // INFO: consider registering TREADY
 
 ---
 
-## X — Optional Signal Rules {#x-optional-signals}
+<a id="x-optional-signals"></a>
+## X — Optional Signal Rules
 
 ### X1 — Unconnected Optional Signals (INFO)
 If TKEEP, TSTRB, TID, TDEST, or TUSER are declared in the port list but
 never driven or used, note it as INFO.
 
-### X2 — Missing TKEEP With Non-Byte-Granular TDATA (WARNING)
-If TDATA is wider than 8 bits and TKEEP is absent, the interface cannot
-express partial last-beat transfers. Acceptable for fixed-width payloads
-but worth flagging.
+### X2 — Missing TKEEP (INFO)
+Omission means every lane is kept. Do not warn merely because TDATA is wide;
+check whether the application needs partial transfers.
 
 ### X3 — TUSER Width Alignment (INFO)
 TUSER width not a multiple of (TDATA_WIDTH/8) — note as INFO per spec recommendation.
